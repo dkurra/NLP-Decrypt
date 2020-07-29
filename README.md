@@ -3,7 +3,7 @@
 ### How to Run
 
 ```python
-python cipher_take_home.py
+python cipher.py
 ```
 
 Follow the input prompt
