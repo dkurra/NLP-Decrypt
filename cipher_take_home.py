@@ -3,7 +3,7 @@ from enigma.machine import EnigmaMachine
 from faker import Faker
 import re
 from model import DeCryptModel
-from nmt_utils import *
+from decrypt_utils import *
 from sklearn.model_selection import train_test_split
 
 
@@ -70,44 +70,52 @@ def score(predicted_plain: List[str], correct_plain: List[str]) -> float:
     return correct / len(correct_plain)
 
 
-def prepare_dataset(input_texts, target_texts, m, Tx=42, Ty=42):
-    dataset, human_vocab, machine_vocab, inv_machine_vocab = load_dataset(input_texts, target_texts, m)
-    X, Y, Xoh, Yoh = preprocess_data(dataset, human_vocab, machine_vocab, Tx, Ty)
-    return X, Y, Xoh, Yoh, human_vocab, inv_machine_vocab
-
-
-def prepare_test_dataset():
-    test_cipher = []
-    test_plain = []
-    with open('test.txt', 'r', encoding='utf-8') as f:
-        test_lines = f.read().split('\n')
-    for line in test_lines:
-        #     print(line.split('\t'))
-        input_text, target_text = line.split('\t')
-        test_cipher.append(input_text)
-        test_plain.append(target_text)
-    return test_cipher, test_plain
+def prepare_dataset(input_texts, target_texts, Tx=42):
+    vocab, inv_vocab = get_vocabulary(input_texts, target_texts)
+    X_one_hot, Y_one_hot = preprocess_data(input_texts, target_texts, vocab, Tx)
+    return X_one_hot, Y_one_hot, vocab, inv_vocab
 
 
 if __name__ == "__main__":
+    import time
+
+    # Generate plain and cipher data
+    print('Data generation started .... ')
     plain, cipher = generate_data(1 << 14)
+    print('Generated %s examples' % len(plain))
 
     X_train, X_test, y_train, y_test = train_test_split(cipher, plain, test_size=0.04, random_state=42)
     m = len(X_train)
     Tx = 42
-    Ty = 42
-    X, Y, Xoh, Yoh, human_vocab, inv_machine_vocab = prepare_dataset(X_train, y_train, m, Tx, Ty)
+    X_one_hot, Y_one_hot, vocab, inv_vocab = prepare_dataset(X_train, y_train, Tx)
+    model = DeCryptModel(Xoh=X_one_hot, Yoh=Y_one_hot, Tx=Tx, m=m)
 
-    model = DeCryptModel(Xoh=Xoh, Yoh=Yoh, Tx=Tx, Ty=Ty, m=m)
-    model.train(epochs=10)
+    inpt = input("- Press 1 To build model from scratch \n- Press 2 To load a pre trained model\n")
+    if int(inpt) == 1:
+        print('Training deep sequence model (ETA 10m) ....')
+        start_time = time.time()
+        # Train the model
+        model.train(epochs=30)
+        end_time = time.time()
+        # Save the model
+        model.save_model()
+    else:
+        start_time = time.time()
+        print('Training deep sequence model (ETA 1minute) ....')
+        model.load_model()
+        end_time = time.time()
 
-    predicts = model.predict(cipher, plain, human_vocab, inv_machine_vocab)
-    train_score = score(predicts, plain)
-    print(train_score)
+    print("************* S C O R E *************************")
+    print('Decrypting holdout (test) samples ....')
+    predicts_test = model.predict(X_test, vocab, inv_vocab)
+    print("--- Test Sample score %s ---" % score(predicts_test, y_test))
 
-    predicts_test = model.predict(X_test, y_test, human_vocab, inv_machine_vocab)
-    test_score = score(predicts_test, y_test)
+    print('Decrypting all samples ....')
+    predicts = model.predict(cipher, vocab, inv_vocab)
+    print("--- Entire dataset score %s ---" % score(predicts, plain))
+    print("************* S C O R E *************************")
 
-    print(test_score)
-
-
+    # log time taken to build model
+    hours, rest = divmod(time.time() - start_time, 3600)
+    minutes, seconds = divmod(rest, 60)
+    print("--- Time taken for building the model: %s minutes  ---" % minutes)
